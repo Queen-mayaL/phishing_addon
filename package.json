@@ -1,0 +1,24 @@
+{
+  "name": "popupex",
+  "version": "1.0.0",
+  "description": "",
+  "main": "background.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "webpack"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.27.1",
+    "@babel/preset-env": "^7.27.1",
+    "babel-loader": "^10.0.0",
+    "webpack": "^5.99.7",
+    "webpack-cli": "^6.0.1"
+  }
+}
