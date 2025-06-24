@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TFJS Model Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+</head>
+<body>
+    <h1>Testing TFJS Model Load</h1>
+    <script>
+        async function testModel() {
+            try {
+                // Load the model
+                const model = await tf.loadLayersModel('tfjs_model/model.json');
+                console.log('✅ Model loaded successfully.');
+
+                // === Load Scaler Params ===
+                let scalerParams;
+                async function loadScalerParams() {
+                    const response = await fetch('tfjs_model/scaler_params.json');
+                    scalerParams = await response.json();
+                }
+                await loadScalerParams();
+
+                // === Normalization Function ===
+                function applyScaler(features, scalerParams) {
+                    const mean = scalerParams.mean;
+                    const scale = scalerParams.scale;
+                    return features.map((val, idx) => (val - mean[idx]) / scale[idx]);
+                }
+
+                // === Feature Extraction ===
+                function extractFeaturesFromUrl(url) {
+                    const parsed = new URL(url);
+                    const hostname = parsed.hostname;
+                    const pathname = parsed.pathname + parsed.search;
+                    const domainParts = hostname.split('.');
+                    const domain = domainParts.slice(-2).join('.');
+                    const tld = domainParts.at(-1);
+                    const normalized = normalizeDomain(domain);
+                    const subdomain = hostname.replace(domain, '').replace(`.${tld}`, '');
+                    const pathSubdomain = hostname.replace(domain, '') + parsed.pathname;
+
+                    const suspiciousKeywords = ['secure', 'account', 'webscr', 'login', 'ebayisapi', 'banking', 'confirm', 'signin'];
+                    const knownLegitDomains = [
+                        'pepper.co.il', 'paypal.com', 'google.com', 'apple.com', 'microsoft.com',
+                        'amazon.com', 'bankofamerica.com', 'isracard.co.il', 'ebay.com', 'facebook.com', 'btl.gov.il'
+                    ];
+
+                    const visualSim = Math.max(...knownLegitDomains.map(legit => fuzzRatio(normalizeDomain(domain), normalizeDomain(legit))));
+                    const editSim = Math.max(...knownLegitDomains.map(legit => {
+                        const a = normalizeDomain(domain);
+                        const b = normalizeDomain(legit);
+                        return 1 - levenshteinDistance(a, b) / Math.max(a.length, 1);
+                    }));
+
+                    const typoDiff = visualSim > 85 && editSim > 0.8 && normalized !== normalizeDomain(domain) ? 1 : 0;
+
+                    const containsLegitButNotExact = knownLegitDomains.some(legit => {
+                        const legitBase = normalizeDomain(legit.split('.')[0]);
+                        return normalized.includes(legitBase) && normalized !== normalizeDomain(legit);
+                    }) ? 1 : 0;
+
+                    return [
+                        url.length,                                           // 1 - url_length
+                        hostname.length,                                      // 2 - hostname_length
+                        pathname.length,                                      // 3 - path_length
+                        (url.match(/\./g) || []).length,                      // 4 - num_dots
+                        (url.match(/\d/g) || []).length,                      // 5 - num_digits
+                        (url.match(/[-@_/&?=]/g) || []).length,               // 6 - num_special_chars
+                        parsed.protocol === 'https:' ? 1 : 0,                 // 7 - https
+                        /^(\d{1,3}\.){3}\d{1,3}/.test(hostname) ? 1 : 0,      // 8 - has_ip
+                        suspiciousKeywords.filter(word => pathSubdomain.toLowerCase().includes(word)).length, // 9 - suspicious_word_count
+                        ['com', 'org', 'net', 'co.il', 'edu'].includes(tld) ? 1 : 0,  // 10 - is_common_tld
+                        knownLegitDomains.includes(domain) ? 1 : 0,           // 11 - is_known_legit
+                        visualSim,                                            // 12 - visual_similarity_score
+                        editSim,                                              // 13 - edit_similarity
+                        typoDiff,                                             // 14 - is_typo_spoof
+                        subdomain.length,                                     // 15 - subdomain_length
+                        (subdomain.includes('login') || subdomain.includes('secure')) ? 1 : 0, // 16 - has_suspicious_subdomain
+                        ['xyz', 'win', 'club', 'top', 'click'].includes(tld) ? 1 : 0,          // 17 - is_suspicious_tld
+                        containsLegitButNotExact,                             // 18 - brand_spoofing
+                        suspiciousKeywords.some(word => domain.toLowerCase().includes(word)) ? 1 : 0, // 19 - suspicious_word_in_domain
+                        (visualSim > 90 && editSim > 0.85) ? 1 : 0            // 20 - high_legit_similarity
+                    ];
+                }
+
+                // === Helpers ===
+                function normalizeDomain(domain) {
+                    const replacements = {'0': 'o', '1': 'l', '3': 'e', '5': 's', '7': 't', '@': 'a', '$': 's', '!': 'i', '|': 'l'};
+                    for (const [key, value] of Object.entries(replacements)) {
+                        domain = domain.replace(new RegExp(key, 'g'), value);
+                    }
+                    return domain.toLowerCase();
+                }
+
+                function fuzzRatio(a, b) {
+                    const matches = a.split('').filter(char => b.includes(char)).length;
+                    return Math.round((2 * matches) / (a.length + b.length) * 100);
+                }
+
+                function levenshteinDistance(a, b) {
+                    const dp = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+                    for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+                    for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+                    for (let i = 1; i <= a.length; i++) {
+                        for (let j = 1; j <= b.length; j++) {
+                            if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1];
+                            else dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+                        }
+                    }
+                    return dp[a.length][b.length];
+                }
+
+                // === Main Logic ===
+                const currentUrl = window.location.href;
+                console.log("🌐 Current URL:", currentUrl);
+
+                const rawFeatures = extractFeaturesFromUrl(currentUrl);
+                const scaledFeatures = applyScaler(rawFeatures, scalerParams);
+                const inputTensor = tf.tensor2d([scaledFeatures]);
+
+                const prediction = await model.predict(inputTensor).array();
+                const prob = prediction[0][0];
+                const isPhishing = prob > 0.5;
+                const confidence = isPhishing ? prob * 100 : (1 - prob) * 100;
+                const verdictText = isPhishing ? 'PHISHING' : 'SAFE';
+
+                console.log("🔎 Phishing Detection:", verdictText, "- Confidence:", confidence.toFixed(2) + "%");
+
+                const box = document.createElement('div');
+                box.style.position = 'fixed';
+                box.style.top = '10px';
+                box.style.right = '10px';
+                box.style.padding = '12px';
+                box.style.backgroundColor = isPhishing ? '#ff4d4d' : '#4CAF50';
+                box.style.color = 'white';
+                box.style.fontFamily = 'Arial, sans-serif';
+                box.style.fontSize = '14px';
+                box.style.zIndex = 9999;
+                box.style.borderRadius = '8px';
+                box.style.boxShadow = '0px 2px 8px rgba(0, 0, 0, 0.2)';
+                box.innerHTML = `<strong>${verdictText}</strong><br>Confidence: ${confidence.toFixed(2)}%`;
+                document.body.appendChild(box);
+                setTimeout(() => box.remove(), 10000);
+            } catch (err) {
+                console.error('❌ Error:', err);
+            }
+        }
+
+        testModel();
+    </script>
+</body>
+</html>
